@@ -33,6 +33,9 @@ Item {
   property int contentSpacing: Style.spacing.md
   property int headerGap: Style.spacing.xs
   readonly property string fetchScript: Qt.resolvedUrl("fetch.py").toString().replace("file://", "")
+  readonly property int maxStdoutChars: 100000
+  readonly property int maxFieldChars: 800
+  readonly property int maxDefinitionChars: 20000
 
   readonly property string displayTitle: root.term !== "" ? root.term : "Jargon"
   readonly property string displayMeta: {
@@ -94,28 +97,50 @@ Item {
     })
   }
 
+  function clipText(value, limit) {
+    var s = String(value || "")
+    if (s.length <= limit)
+      return s
+    return s.substring(0, Math.max(0, limit - 1)) + "…"
+  }
+
+  function allowedUrl(value) {
+    var href = String(value || "").trim()
+    if (href.indexOf("https://andrusk.com/") === 0)
+      return href
+    if (href.indexOf("https://www.andrusk.com/") === 0)
+      return href
+    return ""
+  }
+
   function applyFetch(raw, serial) {
     if (serial !== root.requestSerial) return
     root.loading = false
+    var text = root.clipText(String(raw || "").trim(), root.maxStdoutChars)
     var data = null
     try {
-      data = JSON.parse(String(raw || "").trim() || "{}")
+      data = JSON.parse(text || "{}")
     } catch (e) {
       root.errorText = "The jargon page came back unreadable."
       return
     }
     if (!data || data.ok !== true) {
-      root.errorText = (data && data.error) ? String(data.error) : "Could not fetch a jargon entry."
+      root.errorText = root.clipText((data && data.error) ? String(data.error) : "Could not fetch a jargon entry.", root.maxFieldChars)
+      return
+    }
+    var sourceUrl = root.allowedUrl(data.url)
+    if (!sourceUrl) {
+      root.errorText = "Unexpected jargon source URL."
       return
     }
     root.errorText = ""
-    root.term = String(data.term || "")
-    root.headword = String(data.headword || "")
-    root.pronunciation = String(data.pronunciation || "")
-    root.grammar = String(data.grammar || "")
-    root.definition = String(data.definition || "")
-    root.definitionHtml = String(data.definitionHtml || "")
-    root.url = String(data.url || "")
+    root.term = root.clipText(data.term || "", root.maxFieldChars)
+    root.headword = root.clipText(data.headword || "", root.maxFieldChars)
+    root.pronunciation = root.clipText(data.pronunciation || "", root.maxFieldChars)
+    root.grammar = root.clipText(data.grammar || "", root.maxFieldChars)
+    root.definition = root.clipText(data.definition || "", root.maxDefinitionChars)
+    root.definitionHtml = root.clipText(data.definitionHtml || "", root.maxDefinitionChars * 2)
+    root.url = root.clipText(sourceUrl, root.maxFieldChars)
     root.catalogCount = Number(data.count || 0)
     scroller.contentY = 0
   }
@@ -152,7 +177,16 @@ Item {
     id: fetchProc
     property int acceptedSerial: 0
     property bool ignoreExit: false
-    command: ["python3", root.fetchScript]
+    // Trusted absolute python + minimal env (isolated interpreter flags).
+    command: [
+      "/usr/bin/env", "-i",
+      "PATH=/usr/bin:/bin",
+      "HOME=" + (Quickshell.env("HOME") || ""),
+      "XDG_CACHE_HOME=" + (Quickshell.env("XDG_CACHE_HOME") || ((Quickshell.env("HOME") || "") + "/.cache")),
+      "LANG=" + (Quickshell.env("LANG") || "C.UTF-8"),
+      "LC_ALL=" + (Quickshell.env("LC_ALL") || Quickshell.env("LANG") || "C.UTF-8"),
+      "/usr/bin/python3", "-I", root.fetchScript
+    ]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: root.applyFetch(text, fetchProc.acceptedSerial)

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "jra.jargon",
   "name": "Jargon",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "author": "Justin Andrusk",
   "license": "MIT",
   "description": "Random Jargon File entries in a small floating popup you can drag.",
